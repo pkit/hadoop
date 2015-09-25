@@ -143,6 +143,23 @@ class OpenFileCtxCache {
     return true;
   }
 
+  void remove(FileHandle fileHandle) {
+    OpenFileCtx toEvict;
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Force evict fileId: " + fileHandle.getFileId());
+    }
+    synchronized (this) {
+      toEvict = openFileMap.remove(fileHandle);
+    }
+
+    if (toEvict != null) {
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("Cleanup of fileId: " + fileHandle.getFileId());
+      }
+      toEvict.cleanup();
+    }
+  }
+
   @VisibleForTesting
   void scan(long streamTimeout) {
     ArrayList<OpenFileCtx> ctxToRemove = new ArrayList<OpenFileCtx>();

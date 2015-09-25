@@ -36,9 +36,12 @@ import org.apache.hadoop.nfs.nfs3.FileHandle;
 import org.apache.hadoop.nfs.nfs3.Nfs3Constant;
 import org.apache.hadoop.nfs.nfs3.Nfs3FileAttributes;
 import org.apache.hadoop.nfs.nfs3.Nfs3Status;
+import org.apache.hadoop.nfs.nfs3.request.SETATTR3Request;
 import org.apache.hadoop.nfs.nfs3.request.WRITE3Request;
 import org.apache.hadoop.nfs.nfs3.response.COMMIT3Response;
 import org.apache.hadoop.nfs.nfs3.response.WRITE3Response;
+import org.apache.hadoop.nfs.nfs3.response.SETATTR3Response;
+import org.apache.hadoop.nfs.nfs3.response.WccAttr;
 import org.apache.hadoop.nfs.nfs3.response.WccData;
 import org.apache.hadoop.oncrpc.XDR;
 import org.apache.hadoop.oncrpc.security.VerifierNone;
@@ -117,6 +120,36 @@ public class WriteManager {
     asyncDataServiceStarted = false;
     asyncDataService.shutdown();
     fileContextCache.shutdown();
+  }
+
+  SETATTR3Response handleTruncate(DFSClient dfsClient, SETATTR3Request request,
+                                  Nfs3FileAttributes preOpAttr) throws IOException {
+
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("handleTruncate " + request);
+    }
+    FileHandle fileHandle = request.getHandle();
+    OpenFileCtx openFileCtx = fileContextCache.get(fileHandle);
+    String fileIdPath = Nfs3Utils.getFileIdPath(fileHandle.getFileId());
+    if (openFileCtx != null) {
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("Trying to close and cleanup open file: "+ fileIdPath + " before truncate");
+      }
+      fileContextCache.remove(fileHandle);
+    }
+
+    if(!dfsClient.truncate(fileIdPath, request.getAttr().getSize())) {
+      LOG.info("Could not truncate file fileId: " + fileHandle.getFileId());
+      WccData fileWcc = new WccData(Nfs3Utils.getWccAttr(preOpAttr),
+          preOpAttr);
+      return new SETATTR3Response(Nfs3Status.NFS3ERR_IO, fileWcc);
+    }
+
+    WccAttr preOpWcc = Nfs3Utils.getWccAttr(preOpAttr);
+    Nfs3FileAttributes postOpAttr = Nfs3Utils.getFileAttr(dfsClient,
+        fileIdPath, iug);
+    WccData wccData = new WccData(preOpWcc, postOpAttr);
+    return new SETATTR3Response(Nfs3Status.NFS3_OK, wccData);
   }
 
   void handleWrite(DFSClient dfsClient, WRITE3Request request, Channel channel,

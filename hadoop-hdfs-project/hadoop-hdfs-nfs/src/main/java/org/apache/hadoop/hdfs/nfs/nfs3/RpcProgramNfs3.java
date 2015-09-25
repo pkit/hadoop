@@ -430,13 +430,6 @@ public class RpcProgramNfs3 extends RpcProgram implements Nfs3Interface {
           + remoteAddress);
     }
 
-    if (request.getAttr().getUpdateFields().contains(SetAttrField.SIZE)) {
-      LOG.error("Setting file size is not supported when setattr, fileId: "
-          + handle.getFileId());
-      response.setStatus(Nfs3Status.NFS3ERR_INVAL);
-      return response;
-    }
-
     String fileIdPath = Nfs3Utils.getFileIdPath(handle);
     Nfs3FileAttributes preOpAttr = null;
     try {
@@ -458,6 +451,28 @@ public class RpcProgramNfs3 extends RpcProgram implements Nfs3Interface {
       if (!checkAccessPrivilege(remoteAddress, AccessPrivilege.READ_WRITE)) {
         return new SETATTR3Response(Nfs3Status.NFS3ERR_ACCES, new WccData(
             preOpWcc, preOpAttr));
+      }
+
+      if (request.getAttr().getUpdateFields().contains(SetAttrField.SIZE)) {
+        long size = request.getAttr().getSize();
+        if (size == 0) { // support only O_TRUNC for now
+          if (!checkAccessPrivilege(remoteAddress, AccessPrivilege.READ_WRITE)) {
+            return new SETATTR3Response(Nfs3Status.NFS3ERR_ACCES, new WccData(
+                preOpWcc, preOpAttr));
+          }
+
+          if (LOG.isDebugEnabled()) {
+            LOG.debug("truncate: requested size=" + size + " and current filesize="
+                + preOpAttr.getSize());
+          }
+
+          return writeManager.handleTruncate(dfsClient, request, preOpAttr);
+        } else {
+          LOG.error("Changing file size is not supported when setattr, fileId: "
+              + handle.getFileId());
+          response.setStatus(Nfs3Status.NFS3ERR_INVAL);
+          return response;
+        }
       }
 
       setattrInternal(dfsClient, fileIdPath, request.getAttr(), true);
