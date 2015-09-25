@@ -229,6 +229,44 @@ public class TestRpcProgramNfs3 {
   }
 
   @Test(timeout = 60000)
+  public void testTruncate() throws Exception {
+    HdfsFileStatus status = nn.getRpcServer().getFileInfo(testdir + "/bar");
+    long dirId = status.getFileId();
+    XDR xdr_req = new XDR();
+    FileHandle handle = new FileHandle(dirId);
+    SetAttr3 symAttr = new SetAttr3(0, 1, 0, 0, null, null,
+        EnumSet.of(SetAttrField.SIZE));
+    SETATTR3Request req = new SETATTR3Request(handle, symAttr, false, null);
+    req.serialize(xdr_req);
+
+    // Attempt by an unprivileged user should fail.
+    SETATTR3Response response1 = nfsd.setattr(xdr_req.asReadOnlyWrap(),
+        securityHandlerUnpriviledged,
+        new InetSocketAddress("localhost", 1234));
+    assertEquals("Incorrect return code", Nfs3Status.NFS3ERR_ACCES,
+        response1.getStatus());
+
+    // Attempt by a priviledged user should pass.
+    SETATTR3Response response2 = nfsd.setattr(xdr_req.asReadOnlyWrap(),
+        securityHandler, new InetSocketAddress("localhost", 1234));
+    assertEquals("Incorrect return code", Nfs3Status.NFS3_OK,
+        response2.getStatus());
+
+    xdr_req = new XDR();
+    symAttr = new SetAttr3(0, 1, 0, 1, null, null,
+        EnumSet.of(SetAttrField.SIZE));
+    req = new SETATTR3Request(handle, symAttr, false, null);
+    req.serialize(xdr_req);
+
+    // Attempt to truncate to size > 0 should fail
+    response2 = nfsd.setattr(xdr_req.asReadOnlyWrap(),
+        securityHandler,
+        new InetSocketAddress("localhost", 1234));
+    assertEquals("Incorrect return code", Nfs3Status.NFS3ERR_INVAL,
+        response2.getStatus());
+  }
+
+  @Test(timeout = 60000)
   public void testLookup() throws Exception {
     HdfsFileStatus status = nn.getRpcServer().getFileInfo(testdir);
     long dirId = status.getFileId();
@@ -461,6 +499,66 @@ public class TestRpcProgramNfs3 {
         null, 1, securityHandler,
         new InetSocketAddress("localhost", 1234));
     assertEquals("Incorrect response:", null, response2);
+  }
+
+  @Test(timeout = 60000)
+  public void testWriteTruncateWrite() throws Exception {
+    HdfsFileStatus status = nn.getRpcServer().getFileInfo("/tmp/bar");
+    long dirId = status.getFileId();
+    FileHandle handle = new FileHandle(dirId);
+
+    int size = 20;
+    byte[] buffer = new byte[size];
+    for (int i = 0; i < size; i++) {
+      buffer[i] = (byte) i;
+    }
+
+    WRITE3Request writeReq = new WRITE3Request(handle, 0, size,
+        WriteStableHow.DATA_SYNC, ByteBuffer.wrap(buffer));
+    XDR xdr_req = new XDR();
+    writeReq.serialize(xdr_req);
+
+    WRITE3Response response = nfsd.write(xdr_req.asReadOnlyWrap(),
+        null, 1, securityHandler,
+        new InetSocketAddress("localhost", 1234));
+    assertEquals("Incorrect response:", null, response);
+
+    xdr_req = new XDR();
+    SetAttr3 symAttr = new SetAttr3(0, 1, 0, 0, null, null,
+        EnumSet.of(SetAttrField.SIZE));
+    SETATTR3Request req = new SETATTR3Request(handle, symAttr, false, null);
+    req.serialize(xdr_req);
+
+    SETATTR3Response response2 = nfsd.setattr(xdr_req.asReadOnlyWrap(),
+        securityHandler, new InetSocketAddress("localhost", 1234));
+    assertEquals("Incorrect return code", Nfs3Status.NFS3_OK,
+        response2.getStatus());
+
+    size = 10;
+    buffer = new byte[size];
+    for (int i = 0; i < size; i++) {
+      buffer[i] = (byte) i;
+    }
+    writeReq = new WRITE3Request(handle, 0, size,
+        WriteStableHow.DATA_SYNC, ByteBuffer.wrap(buffer));
+    xdr_req = new XDR();
+    writeReq.serialize(xdr_req);
+
+    response = nfsd.write(xdr_req.asReadOnlyWrap(),
+        null, 1, securityHandler,
+        new InetSocketAddress("localhost", 1234));
+    assertEquals("Incorrect response:", null, response);
+
+    READ3Request readReq = new READ3Request(handle, 0, size);
+    xdr_req = new XDR();
+    readReq.serialize(xdr_req);
+
+    READ3Response response3 = nfsd.read(xdr_req.asReadOnlyWrap(),
+        securityHandler, new InetSocketAddress("localhost", 1234));
+    assertEquals("Incorrect return code:", Nfs3Status.NFS3_OK,
+        response3.getStatus());
+    assertArrayEquals("Incorrect data read", response3.getData().array(), buffer);
+    assertTrue("Not read until eof", response3.isEof());
   }
 
   @Test(timeout = 60000)
